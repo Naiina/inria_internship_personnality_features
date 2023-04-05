@@ -11,59 +11,195 @@ import scipy.io.wavfile as wav
 import pandas as pd
 from csv import reader
 import os
+from pydub import AudioSegment
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import balanced_accuracy_score
+from sklearn.metrics import cohen_kappa_score
 
 
-#wav_file = "chalearn_data_first_week/wav/ztmNiy8D3c.wav"
-#samplerate,data = wav.read(wav_file)
-#data = data[:,0]
-#mfcc_feat = mfcc(data,samplerate,nfft=512*3) # by default 13 features
-#fbank_feat = logfbank(data,samplerate,nfft=512*3) #mel filter bank, default nb featuers: 26
-
-csv_file = "chalearn_data_first_week/FI_pairwise_data.csv"
-
+direct_mp4 = "../chalearn_data/training_set1/training80_01_mp4/"
+direct_wav = "../chalearn_data/training_set1/training80_01_wav/"
+l_file_names_mp4 = os.listdir(direct_mp4)
+csv_file = "../chalearn_data/FI_pairwise_data.csv"
 df_pairewise_data = pd.read_csv(csv_file)  
 
 
-def find_first_occurence_row_csv(csv_file,wav_file):
+
+'''
+Convert mp4 files into wav
+'''
+
+# =============================================================================
+
+# def convert_files(l_file_names_mp4,direct_mp4,direct_wav):
+#     for file_name_mp4 in l_file_names_mp4:
+#         file_name_wav = file_name_mp4[:-4]+".wav"
+#         track = AudioSegment.from_file(direct_mp4+file_name_mp4,  format='m4a')
+#         file_handle = track.export(direct_wav+file_name_wav, format='wav')
+# convert_files(l_file_names_mp4,direct_mp4,direct_wav)
+# 
+# =============================================================================
+
+
+
+def find_first_occurence_row_csv(csv_file,file_name_mp4):
 
     with open(csv_file, 'r') as read_obj:
         # pass the file object to reader() to get the reader object
         csv_reader = reader(read_obj)
-        mp4_file = wav_file[:-4]+".mp4"
         for row in csv_reader:
-            if mp4_file in row:
+            if file_name_mp4 in row:
                 return row
-
             
-l_file_names = os.listdir("chalearn_data_first_week/wav")
-l_mfcc = []
-l_mel = []
-l_features = []
-for elem_wav in l_file_names:
-    samplerate,data = wav.read("chalearn_data_first_week/wav/"+elem_wav)
-    data = data[:,0]
-    l_mfcc.append(mfcc(data,samplerate,nfft=512*3)) # by default 13 features
-    l_mel.append(logfbank(data,samplerate,nfft=512*3)) #mel filter bank, default nb featuers: 26
-    mem = find_first_occurence_row_csv(csv_file,elem_wav)
+def video_position(row,video_name):
+    if video_name == row[0]:
+        return "LEFT"
+    if video_name == row[1]:
+        return "RIGHT"
+    else:
+        return "Not in this row"
     
-    l_features.append(mem)
+def personality_trait_in_row(row,video_position):
+    """
+    Parameters
+    ----------
+    row : list of str
+        DESCRIPTION.
+    video_position : str
+        "LEFT" or "RIGHT"
 
-df_features = pd.DataFrame(l_features) 
-df_features.columns =['videoLeft','videoRight','friendly','authentic','organized','comfortable','imaginative','interview']
+    Returns
+    -------
+    list of str
+        list of the "personality_trait" labeled as "video_position" 
 
-def first_classifier_BC(method,wav_file_A1,wav_file_A2,csv_file,test_set_ratio=0.25):
+    """
+    
+    l_personality_traits_of_video = [] 
+    l_personality_traits = ['friendly', 'authentic', 'organized', 'comfortable', 'imaginative']
+    for i in range(5):
+        if video_position == row[i+2]:
+            elem = l_personality_traits[i]
+            l_personality_traits_of_video.append(elem)
+    return l_personality_traits_of_video
 
-    l_data_f,l_label_f = generate_X_Y_feedback(wav_file_A1,wav_file_A2,csv_file)
-    l_data_r,l_label_r = generate_X_Y_resp(wav_file_A1,wav_file_A2,csv_file)
+def compute_score_video(csv_file,file_name_mp4):
+    nb_of_occurences = 0
+    d_big_fives = {'friendly':0, 'authentic':0, 'organized':0, 'comfortable':0, 'imaginative':0}
     
-    l_data_set = l_data_f + l_data_r
-    l_label_set = l_label_f + l_label_r
+    with open(csv_file, 'r') as read_obj:
+        # pass the file object to reader() to get the reader object
+        csv_reader = reader(read_obj)
+        for row in csv_reader:
+            
+            if file_name_mp4 in row:
+                nb_of_occurences +=1
+                video_pos = video_position(row,file_name_mp4)
+                l_perso_traits = personality_trait_in_row(row,video_pos)
+                for elem in l_perso_traits:
+                    d_big_fives[elem]+=1
+                    
+    # compute the average of each trait
+    if nb_of_occurences !=0:
+        for trait in d_big_fives:
+            d_big_fives[trait] = d_big_fives[trait]/nb_of_occurences
+    return d_big_fives
+
+
+def create_data_set(l_file_names_mp4,direct_wav):
+    X = []
+    to_exclude = []
+    for file_name_mp4 in l_file_names_mp4:
+        file_name_wav = file_name_mp4[:-4]+".wav"
+        samplerate,data = wav.read(direct_wav+file_name_wav)
+        if np.shape(data) == (674816, 2):
+            data0 = data[:,0]
+            X.append(data0) 
+        else:
+            to_exclude.append(file_name_mp4)
+        #y.append(list(df_big_five.loc[file_name_mp4,:]))
+    print("we keept only the data with shape (674816, 2). TO DO: what to do with the other videos?")
+    return X,to_exclude
+
+
+'''
+compute mfcc and mel. take not the right data. To change
+'''
+
+
+# =============================================================================
+# l_mfcc = []
+# l_mel = []
+# l_features = []
+# l_data = []
+# for file_name_mp4 in l_file_names_mp4[:4]:
+#     file_name_wav = file_name_mp4[:-4]+".wav"
+#     samplerate,data = wav.read(direct_wav+file_name_wav)
+#     #data = data[:,0]
+#     l_data.append(data)
+#     l_mfcc.append(mfcc(data,samplerate,nfft=512*3)) # by default 13 features
+#     l_mel.append(logfbank(data,samplerate,nfft=512*3)) #mel filter bank, default nb featuers: 26
+#     mem = find_first_occurence_row_csv(csv_file,file_name_mp4)    
+#     l_features.append(mem)
+# 
+# df_features = pd.DataFrame(l_features) 
+# df_features.columns =['videoLeft','videoRight','friendly','authentic','organized','comfortable','imaginative','interview']
+# 
+# =============================================================================
+
+
+"""
+Create csv file of features of each video using "FI_pairwise_data.csv"
+
+"""
+
+
+l_dict = []
+
+for file_name_mp4 in l_file_names_mp4:
+    d_big_fives = compute_score_video(csv_file,file_name_mp4)
+    l_big_fives = list(d_big_fives.values())
+    l_dict.append(l_big_fives)
     
-    X = np.array(l_data_set)
-    y = np.array(l_label_set)
-   
+
+df_big_five = pd.DataFrame(l_dict, columns=['friendly','authentic','organized','comfortable','imaginative'], index=l_file_names_mp4)
+#df_big_five.to_csv("../chalearn_data/training_set1_training80_01_mp4.csv")
+
+
+
+"""
+Create training and testing sets
+
+"""
+
+
+X,to_exclude = create_data_set(l_file_names_mp4,direct_wav)
+np_X = np.stack( X, axis=0 )  #all data are not in stereo. For now I just took one of the data columns of stereo videos
+
+for elem in to_exclude:
+    df_big_five = df_big_five.drop(elem, axis=0)
     
-    X_train, X_test, y_train, y_test = train_test_split( X, y, test_size=test_set_ratio, random_state=42)
+np_y = df_big_five.to_numpy()
+
+
+
+def first_classifier_BC(method,np_X,np_y,trait,test_set_ratio=0.25): 
+    if trait == 'friendly':
+        Y = np_y[:,0]
+    if trait == 'authentic':
+        Y = np_y[:,1]
+    if trait == 'organized':
+        Y = np_y[:,2]
+    if trait == 'comfortable':
+        Y = np_y[:,3]
+    if trait == 'imaginative':
+        Y = np_y[:,4]
+    
+    X_train, X_test, y_train, y_test = train_test_split( np_X, Y, test_size=test_set_ratio, random_state=42)
     
     if method == 'log_reg':
         classifier = LogisticRegression()
@@ -79,4 +215,16 @@ def first_classifier_BC(method,wav_file_A1,wav_file_A2,csv_file,test_set_ratio=0
         y_predict.append( classifier.predict([X_test[i]]))
     print(balanced_accuracy_score(y_test, y_predict))
     print(cohen_kappa_score(y_test, y_predict))
-    return X,y
+
+
+
+first_classifier_BC('log_reg',np_X,np_y,'imaginative')
+
+
+
+
+
+
+
+
+
